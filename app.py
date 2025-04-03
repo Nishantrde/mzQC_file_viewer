@@ -8,7 +8,6 @@ def parse_mzqc(json_data: dict):
     Parse the mzQC JSON structure (according to the official schema).
     Returns a dictionary that is easy to use in our Streamlit app.
     """
-    # The root is always 'mzQC' per the schema.
     mzqc_root = json_data.get("mzQC", {})
     
     # Basic info
@@ -18,7 +17,7 @@ def parse_mzqc(json_data: dict):
     contact_name = mzqc_root.get("contactName", "N/A")
     contact_address = mzqc_root.get("contactAddress", "N/A")
     
-    # We might have runQualities or setQualities (or both).
+    # Qualities
     run_qualities = mzqc_root.get("runQualities", [])
     set_qualities = mzqc_root.get("setQualities", [])
     
@@ -45,7 +44,6 @@ def show_basic_info(parsed_data: dict):
     st.write(f"**Contact Name:** {parsed_data['contact_name']}")
     st.write(f"**Contact Address:** {parsed_data['contact_address']}")
     
-    # Controlled Vocabularies
     st.write("**Controlled Vocabularies:**")
     for cv in parsed_data["controlled_vocabularies"]:
         name = cv.get("name", "N/A")
@@ -61,16 +59,13 @@ def show_qualities(qualities: list, quality_type: str):
     including metadata, input files, analysis software, and QC metrics.
     """
     st.header(f"{quality_type} ({len(qualities)} total)")
-
     if not qualities:
         st.info(f"No {quality_type} found in this mzQC file.")
         return
 
-    # Provide a dropdown to select which run/set to view
     selection = st.selectbox(f"Select {quality_type} to inspect:", range(len(qualities)))
     quality = qualities[selection]
     
-    # Show metadata
     metadata = quality.get("metadata", {})
     
     # Input Files
@@ -82,7 +77,6 @@ def show_qualities(qualities: list, quality_type: str):
         st.write(f"- Location: {f.get('location', 'N/A')}")
         ff = f.get("fileFormat", {})
         st.write(f"- File Format: {ff.get('name', 'N/A')} ({ff.get('accession', 'N/A')})")
-        # Optional fileProperties
         if "fileProperties" in f:
             for prop in f["fileProperties"]:
                 st.write(f"  - Property: {prop.get('name', 'N/A')} = {prop.get('value', 'N/A')}")
@@ -98,26 +92,22 @@ def show_qualities(qualities: list, quality_type: str):
         if "description" in sw:
             st.write(f"- Description: {sw['description']}")
     
-    # Optional label
     label = metadata.get("label", None)
     if label:
         st.write(f"**Label:** {label}")
     
-    # Optional cvParameters
     cv_params = metadata.get("cvParameters", [])
     if cv_params:
         st.subheader("Additional Metadata (cvParameters)")
         for param in cv_params:
             st.write(f"- {param.get('name', 'N/A')}: {param.get('value', 'N/A')}")
     
-    # Quality Metrics
     quality_metrics = quality.get("qualityMetrics", [])
     st.subheader("Quality Metrics")
     if not quality_metrics:
         st.info("No quality metrics found.")
         return
 
-    # Display each metric, and if numeric data is found, attempt a simple plot
     for i, metric in enumerate(quality_metrics):
         st.markdown("---")
         st.write(f"**Metric {i+1}:**")
@@ -126,18 +116,15 @@ def show_qualities(qualities: list, quality_type: str):
         if desc:
             st.write(f"- **Description:** {desc}")
         
-        # Show the metric value
         metric_value = metric.get("value", None)
-        
-        if isinstance(metric_value, (int, float, str)):  # If it's a simple value
+        if isinstance(metric_value, (int, float, str)):
             st.write(f"- **Value:** {metric_value}")
-        elif isinstance(metric_value, (list, dict)):  # If it's complex data, show as JSON
+        elif isinstance(metric_value, (list, dict)):
             st.write("- **Value (JSON):**")
             st.json(metric_value)
         else:
             st.write("- **Value:** Unknown format")
         
-        # Show unit if available
         unit = metric.get("unit", None)
         if unit:
             if isinstance(unit, dict):
@@ -147,26 +134,17 @@ def show_qualities(qualities: list, quality_type: str):
                 for u in unit:
                     st.write(f"  - {u.get('name', 'N/A')} ({u.get('accession', 'N/A')})")
 
-        # Attempt to generate a visualization for numerical values
         chart = create_plot_from_metric(metric)
         if chart:
             st.altair_chart(chart, use_container_width=True)
 
 def create_plot_from_metric(metric: dict):
     """
-    Enhanced function to create appropriate visualizations based on QC metric data.
-    Handles:
-    - Single numeric values → Bar chart.
-    - List of numeric values → Line chart.
-    - Dictionary-based values:
-         • If exactly two keys with lists (one string, one numeric) → Horizontal bar chart.
-         • Otherwise, treat items as key-value pairs.
-    - Special cases (e.g., peptide sequences) can be handled separately.
+    Create visualizations based on QC metric data.
     """
     metric_name = metric.get("name", "Unknown Metric")
     metric_value = metric.get("value", None)
 
-    # Case 1: Single numeric value → Bar chart.
     if isinstance(metric_value, (int, float)):
         df = pd.DataFrame({"Metric": [metric_name], "Value": [metric_value]})
         chart = alt.Chart(df).mark_bar().encode(
@@ -175,7 +153,6 @@ def create_plot_from_metric(metric: dict):
         ).properties(title=f"{metric_name}: {metric_value}")
         return chart
 
-    # Case 2: List of numeric values → Line chart.
     if isinstance(metric_value, list) and all(isinstance(x, (int, float)) for x in metric_value):
         df = pd.DataFrame({"Index": range(len(metric_value)), "Value": metric_value})
         chart = alt.Chart(df).mark_line(point=True).encode(
@@ -185,21 +162,14 @@ def create_plot_from_metric(metric: dict):
         ).properties(title=f"Series: {metric_name}")
         return chart
 
-    # Case 3: Dictionary-based values.
     if isinstance(metric_value, dict):
         keys = list(metric_value.keys())
-        # Check if the dictionary contains exactly two keys and both values are lists.
         if len(keys) == 2 and isinstance(metric_value[keys[0]], list) and isinstance(metric_value[keys[1]], list):
             list1 = metric_value[keys[0]]
             list2 = metric_value[keys[1]]
-            # Ensure both lists have the same length.
             if len(list1) == len(list2):
-                # If one list is all strings and the other all numeric, use them as category and value.
                 if all(isinstance(x, str) for x in list1) and all(isinstance(x, (int, float)) for x in list2):
-                    df = pd.DataFrame({
-                        "Category": list1,
-                        "Value": list2
-                    })
+                    df = pd.DataFrame({"Category": list1, "Value": list2})
                     chart = alt.Chart(df).mark_bar().encode(
                         x=alt.X("Value:Q", title="Value"),
                         y=alt.Y("Category:N", title="Category", sort="-x"),
@@ -207,10 +177,7 @@ def create_plot_from_metric(metric: dict):
                     ).properties(title=f"{metric_name}: Category vs. Value")
                     return chart
                 elif all(isinstance(x, (int, float)) for x in list1) and all(isinstance(x, str) for x in list2):
-                    df = pd.DataFrame({
-                        "Category": list2,
-                        "Value": list1
-                    })
+                    df = pd.DataFrame({"Category": list2, "Value": list1})
                     chart = alt.Chart(df).mark_bar().encode(
                         x=alt.X("Value:Q", title="Value"),
                         y=alt.Y("Category:N", title="Category", sort="-x"),
@@ -218,7 +185,6 @@ def create_plot_from_metric(metric: dict):
                     ).properties(title=f"{metric_name}: Category vs. Value")
                     return chart
 
-        # Fallback: Treat the dictionary as a collection of key-value pairs.
         df = pd.DataFrame(list(metric_value.items()), columns=["Category", "Value"])
         if df["Value"].apply(lambda x: isinstance(x, (int, float))).all():
             chart = alt.Chart(df).mark_bar().encode(
@@ -228,7 +194,7 @@ def create_plot_from_metric(metric: dict):
             ).properties(title=f"Categorized Values: {metric_name}")
             return chart
 
-    return None  # Return nothing if no recognized pattern.
+    return None
 
 def main():
     st.title("mzQC Viewer")
@@ -238,28 +204,30 @@ def main():
         its contents through textual summaries and simple visualizations. 
         \n
         **Instructions**:
-        - Upload an mzQC file using the file uploader below.
+        - Upload an mzQC file using the uploader below.
+        - The app will automatically convert a **.mzqc** file to JSON if needed.
         - Explore the metadata, input files, analysis software, and QC metrics.
-        - Where possible, numeric QC metrics are visualized automatically.
         """
     )
     
-    uploaded_file = st.file_uploader("Upload your mzQC file (JSON)", type=["json"])
+    uploaded_file = st.file_uploader("Upload your mzQC file (.json or .mzqc)", type=["json", "mzqc"])
     if uploaded_file is not None:
         try:
-            data = json.load(uploaded_file)
+            # Check file extension to decide how to load
+            file_name = uploaded_file.name.lower()
+            if file_name.endswith('.mzqc'):
+                # Assume .mzqc is a JSON file with a different extension
+                file_content = uploaded_file.getvalue().decode("utf-8")
+                data = json.loads(file_content)
+            else:
+                data = json.load(uploaded_file)
+            
             parsed_data = parse_mzqc(data)
-            
             show_basic_info(parsed_data)
-            
-            # runQualities
             show_qualities(parsed_data["run_qualities"], "runQualities")
-            
-            # setQualities
             show_qualities(parsed_data["set_qualities"], "setQualities")
-            
         except Exception as e:
-            st.error(f"Error parsing JSON: {e}")
+            st.error(f"Error parsing file: {e}")
 
 if __name__ == "__main__":
     main()
